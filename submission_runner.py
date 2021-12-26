@@ -25,7 +25,7 @@ import time
 import halton
 import random_utils as prng
 import spec
-
+from profiler import nvtx, nvtx_start, nvtx_stop, TorchProfiler
 
 # TODO(znado): make a nicer registry of workloads that lookup in.
 WORKLOADS = {
@@ -135,6 +135,7 @@ def _import_workload(
 # Example reference implementation showing how to use the above functions
 # together.
 def train_once(
+    prof,
     workload: spec.Workload,
     batch_size: int,
     data_dir: str,
@@ -146,18 +147,21 @@ def train_once(
   data_rng, opt_init_rng, model_init_rng, rng = prng.split(rng, 4)
 
   # Workload setup.
-  logging.info('Initializing dataset.')
-  input_queue = workload.build_input_queue(
-      data_rng, 'train', data_dir=data_dir, batch_size=batch_size)
-  logging.info('Initializing model.')
-  model_params, model_state = workload.init_model_fn(model_init_rng)
-  logging.info('Initializing optimizer.')
-  optimizer_state = init_optimizer_state(
-      workload,
-      model_params,
-      model_state,
-      hyperparameters,
-      opt_init_rng)
+  with nvtx.annotate("Initializing dataset.", color="red"):
+    logging.info('Initializing dataset.')
+    input_queue = workload.build_input_queue(
+        data_rng, 'train', data_dir=data_dir, batch_size=batch_size)
+  with nvtx.annotate("Initializing model.", color="red"):
+    logging.info('Initializing model.')
+    model_params, model_state = workload.init_model_fn(model_init_rng)
+  with nvtx.annotate("Initializing optimizer.", color="red"):
+    logging.info('Initializing optimizer.')
+    optimizer_state = init_optimizer_state(
+        workload,
+        model_params,
+        model_state,
+        hyperparameters,
+        opt_init_rng)
 
   # Bookkeeping.
   goal_reached = False
@@ -169,57 +173,63 @@ def train_once(
   training_complete = False
   global_start_time = time.time()
 
-  logging.info('Starting training loop.')
-  while (is_time_remaining and not goal_reached and not training_complete):
-    step_rng = prng.fold_in(rng, global_step)
-    data_select_rng, update_rng, eval_rng = prng.split(
-        step_rng, 3)
-    start_time = time.time()
-    selected_train_input_batch, selected_train_label_batch = data_selection(
-        workload,
-        input_queue,
-        optimizer_state,
-        model_params,
-        hyperparameters,
-        global_step,
-        data_select_rng)
-    try:
-      optimizer_state, model_params, model_state = update_params(
-          workload=workload,
-          current_param_container=model_params,
-          current_params_types=workload.model_params_types(),
-          model_state=model_state,
-          hyperparameters=hyperparameters,
-          input_batch=selected_train_input_batch,
-          label_batch=selected_train_label_batch,
-          loss_type=workload.loss_type,
-          optimizer_state=optimizer_state,
-          eval_results=eval_results,
-          global_step=global_step,
-          rng=update_rng)
-    except spec.TrainingCompleteError:
-      training_complete = True
-    global_step += 1
-    current_time = time.time()
-    accumulated_submission_time += current_time - start_time
-    is_time_remaining = (
-        accumulated_submission_time < workload.max_allowed_runtime_sec)
-    # Check if submission is eligible for an untimed eval.
-    if (current_time - last_eval_time >= workload.eval_period_time_sec or
-        training_complete):
-      latest_eval_result = workload.eval_model(
-          model_params, model_state, eval_rng, data_dir)
-      logging.info(
-          f'{current_time - global_start_time:.2f}s\t{global_step}'
-          f'\t{latest_eval_result}')
-      last_eval_time = current_time
-      eval_results.append((global_step, latest_eval_result))
-      goal_reached = workload.has_reached_goal(latest_eval_result)
-  metrics = {'eval_results': eval_results, 'global_step': global_step}
+  with nvtx.annotate("training loop", color="red"):
+    logging.info('Starting training loop.')
+    while (is_time_remaining and not goal_reached and not training_complete):
+      step_rng = prng.fold_in(rng, global_step)
+      data_select_rng, update_rng, eval_rng = prng.split(
+          step_rng, 3)
+      start_time = time.time()
+      with nvtx.annotate("data selection", color="blue"):
+        selected_train_input_batch, selected_train_label_batch = data_selection(
+            workload,
+            input_queue,
+            optimizer_state,
+            model_params,
+            hyperparameters,
+            global_step,
+            data_select_rng)
+      try:
+        with nvtx.annotate("update_params", color="blue"):
+          optimizer_state, model_params, model_state = update_params(
+              workload=workload,
+              current_param_container=model_params,
+              current_params_types=workload.model_params_types(),
+              model_state=model_state,
+              hyperparameters=hyperparameters,
+              input_batch=selected_train_input_batch,
+              label_batch=selected_train_label_batch,
+              loss_type=workload.loss_type,
+              optimizer_state=optimizer_state,
+              eval_results=eval_results,
+              global_step=global_step,
+              rng=update_rng)
+      except spec.TrainingCompleteError:
+        training_complete = True
+      global_step += 1
+      current_time = time.time()
+      accumulated_submission_time += current_time - start_time
+      is_time_remaining = (
+          accumulated_submission_time < workload.max_allowed_runtime_sec)
+      # Check if submission is eligible for an untimed eval.
+      if (current_time - last_eval_time >= workload.eval_period_time_sec or
+          training_complete):
+        with nvtx.annotate("eval_model", color="blue"):
+          latest_eval_result = workload.eval_model(
+              model_params, model_state, eval_rng, data_dir)
+        logging.info(
+            f'{current_time - global_start_time:.2f}s\t{global_step}'
+            f'\t{latest_eval_result}')
+        last_eval_time = current_time
+        eval_results.append((global_step, latest_eval_result))
+        goal_reached = workload.has_reached_goal(latest_eval_result)
+      # prof.step()
+    metrics = {'eval_results': eval_results, 'global_step': global_step}
   return accumulated_submission_time, metrics
 
 
 def score_submission_on_workload(
+    prof,
     workload: spec.Workload,
     workload_name: str,
     submission_path: str,
@@ -263,6 +273,7 @@ def score_submission_on_workload(
       rng, _ = prng.split(rng, 2)
       logging.info(f'--- Tuning run {hi + 1}/{num_tuning_trials} ---')
       timing, metrics = train_once(
+          prof,
           workload,
           batch_size,
           data_dir,
@@ -286,6 +297,7 @@ def score_submission_on_workload(
     # If the submission is responsible for tuning itself, we only need to run it
     # once and return the total time.
     score, _ = train_once(
+        prof,
         workload,
         batch_size,
         init_optimizer_state,
@@ -310,7 +322,11 @@ def main(_):
       workload_registry_name=FLAGS.workload,
       workload_class_name=workload_metadata['workload_class_name'])
 
+  nvtx_start()
+  prof = TorchProfiler()
+  prof.start()
   score = score_submission_on_workload(
+      prof,
       workload,
       FLAGS.workload,
       FLAGS.submission_path,
@@ -318,8 +334,9 @@ def main(_):
       FLAGS.tuning_ruleset,
       FLAGS.tuning_search_space,
       FLAGS.num_tuning_trials)
+  prof.stop()
+  nvtx_stop()
   logging.info('Final %s score: %f', FLAGS.workload, score)
-
 
 if __name__ == '__main__':
   app.run(main)

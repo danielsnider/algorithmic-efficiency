@@ -5,7 +5,7 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 
 import spec
 from workloads.mnist.mnist_pytorch.submission import data_selection
-
+import nvtx
 
 def get_batch_size(workload_name):
   batch_sizes = {'imagenet_pytorch': 128}
@@ -61,30 +61,37 @@ def update_params(
   """Return (updated_optimizer_state, updated_params)."""
   del current_params_types
   del eval_results
-  input_batch, label_batch = (
-    workload.preprocess_for_train(input_batch, label_batch, None, None, None))
+  with nvtx.annotate("preprocess_for_train", color="green"):
+    input_batch, label_batch = (
+      workload.preprocess_for_train(input_batch, label_batch, None, None, None))
 
-  current_model = current_param_container
-  current_param_container.train()
-  optimizer_state['optimizer'].zero_grad()
+  with nvtx.annotate("container zero", color="green"):
+    current_model = current_param_container
+    current_param_container.train()
+    optimizer_state['optimizer'].zero_grad()
 
-  output, new_model_state = workload.model_fn(
-      params=current_model,
-      input_batch=input_batch,
-      model_state=model_state,
-      mode=spec.ForwardPassMode.TRAIN,
-      rng=rng,
-      update_batch_norm=True)
+  with nvtx.annotate("forward", color="green"):
+    output, new_model_state = workload.model_fn(
+        params=current_model,
+        input_batch=input_batch,
+        model_state=model_state,
+        mode=spec.ForwardPassMode.TRAIN,
+        rng=rng,
+        update_batch_norm=True)
 
-  loss = workload.loss_fn(
-      label_batch=label_batch,
-      logits_batch=output)
+  with nvtx.annotate("loss_fn", color="green"):
+    loss = workload.loss_fn(
+        label_batch=label_batch,
+        logits_batch=output)
 
-  loss.backward()
-  optimizer_state['optimizer'].step()
+  with nvtx.annotate("loss.backward", color="green"):
+    loss.backward()
+  with nvtx.annotate("optimizer step()", color="green"):
+    optimizer_state['optimizer'].step()
 
   steps_per_epoch = workload.num_train_examples // get_batch_size('imagenet_pytorch')
   if (global_step + 1) % steps_per_epoch == 0:
-    optimizer_state['scheduler'].step()
+    with nvtx.annotate("scheduler step*(", color="green"):
+      optimizer_state['scheduler'].step()
 
   return (optimizer_state, current_param_container, new_model_state)
