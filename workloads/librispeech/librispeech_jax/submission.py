@@ -1,6 +1,7 @@
 import functools
 import math
 from typing import Iterator, List, Tuple
+from absl import logging
 
 import jax
 import jax.numpy as jnp
@@ -153,4 +154,19 @@ def data_selection(
 
   Return a tuple of input label batches.
   """
-  return next(input_queue), None
+  data = next(input_queue)
+
+  # Confirm the batch size is correct, get new data if not
+  feature_idx = 1
+  batch_idx = 0
+  features_shape = data[feature_idx].shape
+  actual_batch_size = features_shape[batch_idx]
+  desired_batch_size = get_batch_size('librispeech_jax')
+  while actual_batch_size != desired_batch_size:
+    logging.warning(f'actual_batch_size of {actual_batch_size} is not the desired_batch_size of {desired_batch_size}')
+    data = next(input_queue)
+    features_shape = data[feature_idx].shape
+    actual_batch_size = features_shape[batch_idx]
+    desired_batch_size = get_batch_size('librispeech_jax')
+
+  return data, None
