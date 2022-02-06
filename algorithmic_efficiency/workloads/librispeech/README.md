@@ -12,13 +12,16 @@ and evaluate it on Librispeech test clean dataset. We get Character Error Rate
 mkdir data_dir
 cd data_dir
 
-download_data.sh
+../download_data.sh
 
 cd ..
 mkdir work_dir
 cd work_dir
 
-python prepare_data.py data_dir/LibriSpeech
+pip3 install --user torch -f 'https://download.pytorch.org/whl/torch_stable.html'
+pip3 install panda librosa
+pip3 install ctcdecode Levenshtein
+python3 ../prepare_data.py ../data_dir/LibriSpeech
 ```
 
 The raw dataset is under `data_dir` and the preprocessed dataset is under
