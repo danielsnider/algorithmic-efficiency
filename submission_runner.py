@@ -135,7 +135,6 @@ def _import_workload(
 # Example reference implementation showing how to use the above functions
 # together.
 def train_once(
-    prof,
     workload: spec.Workload,
     batch_size: int,
     data_dir: str,
@@ -176,6 +175,17 @@ def train_once(
   with nvtx.annotate("training loop", color="red"):
     logging.info('Starting training loop.')
     while (is_time_remaining and not goal_reached and not training_complete):
+      logging.info(f'global_step: {global_step}')
+      if global_step == 3:
+        prof = TorchProfiler()
+        prof.start()
+      if global_step > 3:
+        prof.step()
+      if global_step == 10:
+        prof.stop()
+        import sys
+        sys.exit(0)
+
       step_rng = prng.fold_in(rng, global_step)
       data_select_rng, update_rng, eval_rng = prng.split(
           step_rng, 3)
@@ -223,13 +233,11 @@ def train_once(
         last_eval_time = current_time
         eval_results.append((global_step, latest_eval_result))
         goal_reached = workload.has_reached_goal(latest_eval_result)
-      # prof.step()
     metrics = {'eval_results': eval_results, 'global_step': global_step}
   return accumulated_submission_time, metrics
 
 
 def score_submission_on_workload(
-    prof,
     workload: spec.Workload,
     workload_name: str,
     submission_path: str,
@@ -273,7 +281,6 @@ def score_submission_on_workload(
       rng, _ = prng.split(rng, 2)
       logging.info(f'--- Tuning run {hi + 1}/{num_tuning_trials} ---')
       timing, metrics = train_once(
-          prof,
           workload,
           batch_size,
           data_dir,
@@ -297,7 +304,6 @@ def score_submission_on_workload(
     # If the submission is responsible for tuning itself, we only need to run it
     # once and return the total time.
     score, _ = train_once(
-        prof,
         workload,
         batch_size,
         init_optimizer_state,
@@ -323,10 +329,7 @@ def main(_):
       workload_class_name=workload_metadata['workload_class_name'])
 
   nvtx_start()
-  prof = TorchProfiler()
-  prof.start()
   score = score_submission_on_workload(
-      prof,
       workload,
       FLAGS.workload,
       FLAGS.submission_path,
@@ -334,7 +337,6 @@ def main(_):
       FLAGS.tuning_ruleset,
       FLAGS.tuning_search_space,
       FLAGS.num_tuning_trials)
-  prof.stop()
   nvtx_stop()
   logging.info('Final %s score: %f', FLAGS.workload, score)
 

@@ -1,6 +1,8 @@
 
 nvtx_enabled = False
-torchprofiler_enabled = False
+torchprofiler_enabled = True
+print(f'nvtx_enabled: {nvtx_enabled}')
+print(f'nvtx_enabled: {torchprofiler_enabled}')
 
 def noop():
   pass
@@ -27,16 +29,19 @@ class no_op_nvtx:
 
 
 def torch_profiler():
+  # def trace_handler(prof):
+  #   print(prof.key_averages().table(
+  #       sort_by="self_cuda_time_total", row_limit=-1))
   import torch
-  torch.cuda.cudart().cudaProfilerStart()
   prof = torch.profiler.profile(
-        # schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/resnet18'),
-        # record_shapes=True,
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=5),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/torch_profiler'),
+        # on_trace_ready=trace_handler,
+        record_shapes=True,
         # profile_memory=True, # makes it slower
-        # with_stack=True
+        with_stack=True
   )
-  return TorchProfiler
+  return prof
 
 def no_op_torch_profiler():
   class TorchProfiler:
