@@ -26,6 +26,8 @@ from algorithmic_efficiency import halton
 from algorithmic_efficiency import spec
 import algorithmic_efficiency.random_utils as prng
 
+from algorithmic_efficiency.profiler import TorchProfiler
+
 # TODO(znado): make a nicer registry of workloads that lookup in.
 BASE_WORKLOADS_DIR = "algorithmic_efficiency/workloads/"
 
@@ -172,6 +174,15 @@ def train_once(workload: spec.Workload, batch_size: int, data_dir: str,
 
   logging.info('Starting training loop.')
   while (is_time_remaining and not goal_reached and not training_complete):
+    logging.info(f'global_step: {global_step}')
+    if global_step == 3:
+      prof = TorchProfiler()
+    if global_step > 3:
+      prof.step()
+    if global_step == 6:
+      import sys
+      sys.exit(0)
+
     step_rng = prng.fold_in(rng, global_step)
     data_select_rng, update_rng, eval_rng = prng.split(step_rng, 3)
     start_time = time.time()
